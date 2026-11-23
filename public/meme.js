@@ -4,7 +4,8 @@
 import { textures } from './textures.js';
 import { JOKES, CAPTIONS, BANNED } from './meme-text.js';
 import { TEMPLATES } from './meme-templates.js';
-import { W, H, RHEX, box, rr, text, oneLine, pocket, scene, tileRect, lin, rad, shadow, noShadow, cloud, stars, star, bubble, fmtLeft, fmtAgo, pct, rng } from './meme-draw.js';
+import { GIFEncoder, quantize, applyPalette } from './vendor/gifenc.esm.js';
+import { ANIM, W, H, RHEX, box, rr, text, oneLine, pocket, scene, tileRect, lin, rad, shadow, noShadow, cloud, stars, star, bubble, fmtLeft, fmtAgo, pct, rng } from './meme-draw.js';
 
 const SITE = 'https://pocket-viewer.vercel.app/';
 const RPC = 'https://rpc.mainnet.chain.robinhood.com';
@@ -29,6 +30,7 @@ const M = {
   cap: { top: '', bot: '', i: -1, edited: false, size: 0, color: '#ffffff', bg: 'scene' },
   tpl: 'wanted', extra: {}, fields: {},
   last: null,
+  move: false, motions: { bob: true, blink: true, wobble: true },
 };
 
 // ---------------- data ----------------
@@ -137,10 +139,10 @@ async function tex(night) {
   const k = night ? 'n' : 'd'; if (texCache[k]) return texCache[k];
   const load = (u) => loadImg(u);
   const s = textures('soil', night), g = textures('garden', night), h = textures('heaven', night);
-  const [soil, garden, heaven, hedge, fence, wingL, wingR, halo, hybridBase, hybridMask] = await Promise.all([
+  const [soil, garden, heaven, hedge, fence, wingL, wingR, halo, hybridBase, hybridMask, hybridEyes] = await Promise.all([
     Promise.all([0, 1, 2, 3].map((i) => load(s['t' + i]))), Promise.all([0, 1, 2, 3].map((i) => load(g['t' + i]))), Promise.all([0, 1, 2, 3].map((i) => load(h['t' + i]))),
-    load(g.hedge), load(g.fence), load(h.wingL), load(h.wingR), load(h.halo), load('/hybrid/base.png?v=1'), load('/hybrid/mask.png?v=1')]);
-  return (texCache[k] = { soil, garden, heaven, hedge, fence, wingL, wingR, halo, hybridBase, hybridMask, night });
+    load(g.hedge), load(g.fence), load(h.wingL), load(h.wingR), load(h.halo), load('/hybrid/base.png?v=1'), load('/hybrid/mask.png?v=1'), load('/hybrid/eyes.png?v=1').catch(() => null)]);
+  return (texCache[k] = { soil, garden, heaven, hedge, fence, wingL, wingR, halo, hybridBase, hybridMask, hybridEyes, night });
 }
 let fontsReady = null;
 function fonts() { return fontsReady || (fontsReady = Promise.all(['400 60px Anton', '700 60px Fraunces', '900 60px Fraunces', 'italic 600 40px Fraunces', '600 30px "Pixelify Sans"', '600 30px Inter', '700 30px Inter'].map((f) => document.fonts.load(f).catch(() => null)))); }
@@ -332,9 +334,80 @@ async function render(depth = 0) {
     else if (M.mode === 'cap') { syncCaption(I); drawCaption(x, I, T); }
     else { const t = tplById[M.tpl]; t.draw(x, P, fieldVals(t, P), { night: M.night, tex: T }); syncFieldInputs(t, P); syncTplGrid(); }
   } catch (e) { console.error('meme render failed', e); }
-  M.last = { I, P };
-  status(I); shareLinks(I);
+  M.last = { I, P, T };
+  status(I); shareLinks(I); syncMove();
   if (M.mode === 'tpl') thumbs(P[0], T);
+  if (M.move) startMove(my); else stopMove();
+}
+// One drawing pass of the current meme onto any canvas context (used for the GIF frames).
+function drawCurrent(x, I, P, T) {
+  if (M.mode === 'card') drawCard(x, I, currentJoke(), T);
+  else if (M.mode === 'cap') drawCaption(x, I, T);
+  else { const t = tplById[M.tpl]; t.draw(x, P, fieldVals(t, P), { night: M.night, tex: T }); }
+}
+
+// ---------------- Make it move (animated GIF) ----------------
+// 16 frames x 70ms (a 1.1s loop), drawn straight at GIF size so text stays sharp and the pixel art is
+// scaled with nearest-neighbour. Encoded in the browser with the vendored gifenc (MIT), no server and no CDN.
+const GIF = { n: 16, delay: 70, sizes: [540, 450, 360], cap: 5 * 1024 * 1024 };
+let mv = { frames: null, size: 0, sig: '', timer: 0, i: 0 };
+const isBuddy = () => M.mode === 'tpl' && M.tpl === 'buddy';
+const moveSig = () => JSON.stringify([M.mode, M.tpl, M.id, M.night, M.motions, M.mode === 'tpl' ? slotIds() : 0, M.mode === 'tpl' ? M.fields[M.tpl] : M.mode === 'cap' ? M.cap : M.joke]);
+function makeFrames(size) {
+  const { I, P, T } = M.last, out = [], k = size / W;
+  const c = document.createElement('canvas'); c.width = c.height = size; const x = c.getContext('2d', { willReadFrequently: true });
+  const buddyMode = isBuddy();
+  Object.assign(ANIM, { on: true, n: GIF.n, bob: buddyMode && M.motions.bob, blink: buddyMode && M.motions.blink, wobble: buddyMode && M.motions.wobble });
+  try {
+    for (let f = 0; f < GIF.n; f++) {
+      ANIM.f = f; x.setTransform(k, 0, 0, k, 0, 0); x.clearRect(0, 0, W, H); x.imageSmoothingEnabled = true; noShadow(x); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
+      try { drawCurrent(x, I, P, T); } catch (e) { console.error('gif frame failed', e); }
+      out.push(x.getImageData(0, 0, size, size));
+    }
+  } finally { ANIM.on = false; ANIM.f = 0; }
+  return out;
+}
+function startMove(my) {
+  const sig = moveSig();
+  if (mv.frames && mv.sig === sig) return loop();
+  stopMove(); if (my !== seq) return;
+  mv.frames = makeFrames(GIF.sizes[0]); mv.size = GIF.sizes[0]; mv.sig = sig; mv.i = 0; mv.gif = null; loop();
+  // Encode in the background too, so Share (which phones only allow right after a tap) has the GIF ready.
+  clearTimeout(mv.warm); mv.warm = setTimeout(() => { if (mv.sig === sig) gifBlob().catch((e) => console.error(e)); }, 400);
+}
+// Live preview: cycle the GIF frames on the main canvas (scaled up crisp).
+function loop() {
+  clearInterval(mv.timer); const cv = $('#mmCanvas'), x = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = mv.size; const tx = tmp.getContext('2d');
+  const tick = () => { if (!mv.frames) return; tx.putImageData(mv.frames[mv.i], 0, 0); x.setTransform(1, 0, 0, 1, 0, 0); x.imageSmoothingEnabled = false; x.drawImage(tmp, 0, 0, W, H); mv.i = (mv.i + 1) % mv.frames.length; };
+  tick(); mv.timer = setInterval(tick, GIF.delay);
+}
+function stopMove() { clearInterval(mv.timer); mv.timer = 0; mv.frames = null; mv.sig = ''; mv.gif = null; }
+// One global palette for all frames (sampled from frames 0, mid and the blink), so colours never flicker between frames.
+function encodeGif(frames, size) {
+  const pick = [0, GIF.n >> 1, GIF.n - 5, GIF.n - 3].filter((i, j, a) => i < frames.length && a.indexOf(i) === j);
+  const sample = new Uint8ClampedArray(pick.length * size * size * 4); pick.forEach((i, j) => sample.set(frames[i].data, j * size * size * 4));
+  const pal = quantize(sample, 256, { format: 'rgb565' }), g = GIFEncoder();
+  frames.forEach((fr, i) => g.writeFrame(applyPalette(fr.data, pal, 'rgb565'), size, size, i === 0 ? { palette: pal, delay: GIF.delay, repeat: 0 } : { delay: GIF.delay }));
+  g.finish(); return g.bytes();
+}
+async function gifBlob() {
+  if (!M.last) return null;
+  if (!isBuddy()) return null; const sig = moveSig(); if (mv.gif && mv.gif.sig === sig) return mv.gif.blob;
+  let bytes = null;
+  for (const size of GIF.sizes) { const fr = size === mv.size && mv.frames && mv.sig === sig ? mv.frames : makeFrames(size); bytes = encodeGif(fr, size); if (bytes.length <= GIF.cap) break; }
+  const blob = new Blob([bytes], { type: 'image/gif' }); mv.gif = { sig, blob }; return blob;
+}
+// Moving GIFs are a Pocket Buddy feature only (Shreyas): the box is hidden everywhere else, and leaving
+// Pocket Buddy drops back to a still PNG, so the hop never runs on other templates.
+function syncMove() {
+  const b = isBuddy();
+  if (!b && M.move) { M.move = false; stopMove(); }
+  const box = $('#mmMoveBox'); if (box) box.hidden = !b;
+  document.querySelectorAll('#mmMove button').forEach((x) => x.setAttribute('aria-pressed', String((x.dataset.mv === '1') === M.move)));
+  const mo = $('#mmMotions'); if (mo) mo.hidden = !M.move;
+  document.querySelectorAll('#mmMotions button').forEach((x) => { const only = x.dataset.mo !== 'bob'; x.hidden = only && !b; x.setAttribute('aria-pressed', String(!!M.motions[x.dataset.mo])); });
+  const dl = $('#mmDownload'); if (dl) dl.lastChild.textContent = M.move ? 'Download GIF' : 'Download PNG';
+  const hint = $('#mmMoveHint'); if (hint) hint.textContent = !M.move ? '' : b ? 'Hop, blink and a swaying hat, looped. Saves as a GIF that plays in the X feed.' : 'The Pocket hops in place, looped. Saves as a GIF that plays in the X feed.';
 }
 function status(I) {
   const name = I.seg === 'reveal' ? (I.spirit?.name || '') : (I.kind || '');
@@ -361,8 +434,8 @@ function shareText(I) {
   return `${who} in the "${tplById[M.tpl].name}" meme, made with Pocket Almanac`;
 }
 function shareLinks(I) { $('#mmX').href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText(I))}&url=${encodeURIComponent(SITE)}`; }
-function blob() { return new Promise((res) => $('#mmCanvas').toBlob(res, 'image/png')); }
-const fname = () => `pocket-${M.id}-${M.mode === 'tpl' ? M.tpl : M.mode === 'cap' ? 'caption' : 'statcard'}.png`;
+function blob() { return M.move && isBuddy() ? gifBlob() : new Promise((res) => $('#mmCanvas').toBlob(res, 'image/png')); }
+const fname = () => `pocket-${M.id}-${M.mode === 'tpl' ? M.tpl : M.mode === 'cap' ? 'caption' : 'statcard'}.${M.move ? 'gif' : 'png'}`;
 
 // ---------------- thumbnails ----------------
 let thumbSig = '', thumbJob = 0;
@@ -457,7 +530,7 @@ function mount() {
       <a class="mm-btn" id="mmX" href="#" target="_blank" rel="noopener">${ICON.x}Post on X</a>
       <button class="mm-btn" id="mmShare" hidden>${ICON.share}Share</button>
     </div>
-    <p class="mm-hint">Post on X opens a ready-made post with the site link. Links can't carry images, so download the PNG and attach it${navigator.share ? ', or use Share to send the image straight from your phone' : ''}.</p>
+    <p class="mm-hint">Post on X opens a ready-made post with the site link. Links can't carry images, so download the image and attach it${navigator.share ? ', or use Share to send the image straight from your phone' : ''}.</p>
   </div>
   <div class="mm-panel">
     <div class="mm-modes" role="tablist" aria-label="Meme type">
@@ -473,6 +546,12 @@ function mount() {
       <p class="mm-status" id="mmStatus">Loading…</p>
       <div class="mm-row"><div class="mm-seg" id="mmDN"><button data-dn="0">Day art</button><button data-dn="1">Night art</button></div></div>
     </div>
+    <div class="mm-box" id="mmMoveBox" hidden>
+      <div class="mm-h">Make it move <small>animated GIF</small></div>
+      <div class="mm-seg" id="mmMove"><button data-mv="0" aria-pressed="true">Still PNG</button><button data-mv="1" aria-pressed="false">Moving GIF</button></div>
+      <div class="mm-seg" id="mmMotions" hidden><button data-mo="bob">Hop</button><button data-mo="blink">Blink</button><button data-mo="wobble">Hat wobble</button></div>
+      <p class="mm-status" id="mmMoveHint"></p>
+    </div>
     <div id="mmControls"></div>
   </div>`;
   if (navigator.share) $('#mmShare').hidden = false;
@@ -482,11 +561,14 @@ function mount() {
   mounted = true;
 }
 function syncDN() { document.querySelectorAll('#mmDN button').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.dn === '1') === M.night))); }
+function saveBlob(bl) { const a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = fname(); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
 async function onClick(e) {
   const b = e.target.closest('button, a'); if (!b) return;
   if (b.dataset.m) return setMode(b.dataset.m);
   if (b.id === 'mmRandom') return setId(randomId(rollKinds(), M.id));
   if (b.dataset.k != null && b.closest('#mmKinds')) { M.kindFilter = b.dataset.k; document.querySelectorAll('#mmKinds button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); return setId(randomId(rollKinds(), M.id)); }
+  if (b.dataset.mv != null) { M.move = b.dataset.mv === '1' && isBuddy(); syncMove(); return schedule(); }
+  if (b.dataset.mo) { M.motions[b.dataset.mo] = !M.motions[b.dataset.mo]; syncMove(); return schedule(); }
   if (b.dataset.dn != null) { M.night = b.dataset.dn === '1'; syncDN(); thumbSig = ''; return schedule(); }
   if (b.dataset.j) { const n = M.joke.list.length; if (!n) return; M.joke.custom = ''; const ci = $('#mmJCustom'); if (ci) ci.value = ''; M.joke.i = (M.joke.i + Number(b.dataset.j) + n) % n; return schedule(); }
   if (b.id === 'mmJShuffle') { const n = M.joke.list.length; if (n < 2) return; M.joke.custom = ''; $('#mmJCustom').value = ''; let i; do { i = Math.floor(Math.random() * n); } while (i === M.joke.i); M.joke.i = i; return schedule(); }
@@ -500,9 +582,10 @@ async function onClick(e) {
   }
   if (b.dataset.rslot) { const s = Number(b.dataset.rslot), t = tplById[M.tpl]; M.extra[M.tpl + ':' + s] = randomId(slotRole(t, s) || t.prefer?.[s] || null, M.id); return schedule(); }
   if (b.id === 'mmReset') { M.fields[M.tpl] = {}; document.querySelectorAll('#mmFields [data-f]').forEach((el) => { el.value = ''; }); return schedule(); }
-  if (b.id === 'mmDownload') { const bl = await blob(); if (!bl) return; const a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = fname(); document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); return; }
+  if (b.id === 'mmDownload') { const bl = await blob(); if (bl) saveBlob(bl); return; }
   if (b.id === 'mmShare') {
-    const bl = await blob(); const file = bl && new File([bl], fname(), { type: 'image/png' }); const txt = shareText(M.last.I);
+    const bl = await blob(); const file = bl && new File([bl], fname(), { type: M.move ? 'image/gif' : 'image/png' }); const txt = shareText(M.last.I);
+    if (M.move && file && !navigator.canShare?.({ files: [file] })) { saveBlob(bl); return; } // this phone can't share a GIF file: save it instead
     try { if (file && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], text: `${txt}\n${SITE}` }); else await navigator.share({ text: txt, url: SITE }); } catch (err) { /* user cancelled */ }
     return;
   }
@@ -535,5 +618,6 @@ export function openMeme(app, id) {
   const want = id && A.byId().has(id) ? id : M.id ?? randomId('r');
   setId(want, { push: !id });
   window.__meme = { M, TEMPLATES, CAPTIONS, render, setMode, setId, info, jokesFor, capsFor, allowed: (tid, id) => allowed(tplById[tid], kindOf(id)), slotIds, kindOf,
+    gifBlob, makeFrames, setMove: (on, motions) => { M.move = !!on; if (motions) Object.assign(M.motions, motions); syncMove(); return render(); },
     _byId: () => A.byId(), select: (t) => { M.mode = 'tpl'; M.tpl = t; buildControls(); return render(); } };
 }

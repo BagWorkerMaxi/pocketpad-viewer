@@ -1,7 +1,7 @@
 // Meme Maker templates: every scene is drawn in code (no meme photos). Captions are editable;
 // any default that shows a number reads it from the Pocket's real data.
-import { W, H, RHEX, box, rr, text, oneLine, pocket, scene, cloud, drop, flame, star, rays, stars, wateringCan, candle, sweat, badge, bubble, tileRect, lin, rad, shadow, noShadow, rng, fmtLeft, pct } from './meme-draw.js';
-import { buddy } from './meme-hybrid.js';
+import { ANIM, hop, W, H, RHEX, box, rr, text, oneLine, pocket, scene, cloud, drop, flame, star, rays, stars, wateringCan, candle, sweat, badge, bubble, tileRect, lin, rad, shadow, noShadow, rng, fmtLeft, pct } from './meme-draw.js';
+import { buddy, buddyFrame, PAD } from './meme-hybrid.js';
 
 const nm = (I) => I.seg === 'reveal' ? (I.spirit?.name || 'Spirit') : (I.kind || 'Pocket');
 // Kinds: s seed, p plant, r spirit. by(I, {s, p, r}) picks the per-kind value.
@@ -58,6 +58,17 @@ export const TEMPLATES = [
       if (!b) { pocket(x, I, W / 2, H * .8, 600); return; }
       // Centre the drawn pixels (not the 256px work canvas), at the largest whole-pixel scale (max 4x, which every Pocket fits) with at least a 28px margin.
       const [x0, y0, x1, y1] = b.bbox, bw = x1 - x0, bh = y1 - y0, S = Math.max(1, Math.min(4, Math.floor((W - 56) / Math.max(bw, bh))));
+      if (ANIM.on) { // GIF frame: hop 0-8px (2px steps), blink near the end of the loop, hat sways up to 6px at its top
+        const f = ANIM.f, n = ANIM.n, dy = ANIM.bob ? -2 * Math.round(4 * hop()) : 0;
+        const lid = ANIM.blink ? ({ [n - 6]: 1, [n - 5]: 2, [n - 4]: 2, [n - 3]: 1 })[f] || 0 : 0;
+        const tilt = ANIM.wobble ? Math.round(6 * Math.sin(2 * Math.PI * f / n)) : 0;
+        const fr = buddyFrame(b, T.tex?.hybridEyes, { dy, lid, tilt });
+        // Same scale as the still unless the extra room for the hop/sway no longer fits; then one step smaller.
+        const ax0 = x0 - 6, ay0 = y0 - 8, aw = bw + 12, ah = bh + 8, A = Math.min(S, Math.max(1, Math.floor((W - 56) / Math.max(aw, ah))));
+        x.save(); x.imageSmoothingEnabled = false;
+        x.drawImage(fr, ax0 + PAD, ay0 + PAD, aw, ah, Math.round((W - bw * A) / 2) - 6 * A, Math.round((H - bh * A) / 2) - 8 * A, aw * A, ah * A); x.restore();
+        return;
+      }
       x.save(); x.imageSmoothingEnabled = false;
       x.drawImage(b.art, x0, y0, bw, bh, Math.round((W - bw * S) / 2), Math.round((H - bh * S) / 2), bw * S, bh * S); x.restore();
     } },

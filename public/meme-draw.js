@@ -3,6 +3,11 @@ export const W = 1080, H = 1080;
 export const RHEX = { Common: '#a9b0b4', Uncommon: '#6fd27e', Rare: '#55aaff', Epic: '#b77cff', Legendary: '#ffb72e', 'One of One': '#ff6fae' };
 export const FONTS = { serif: 'Fraunces, Georgia, serif', anton: 'Anton, Impact, "Arial Narrow Bold", sans-serif', pixel: '"Pixelify Sans", ui-monospace, monospace', sans: 'Inter, system-ui, sans-serif' };
 
+// "Make it move": while a GIF frame is being drawn, ANIM.on is true and ANIM.f / ANIM.n give the frame.
+// Every sprite drawn through pocket() bobs a few whole art pixels; the ground shadow and layout stay put.
+export const ANIM = { on: false, f: 0, n: 16, bob: true, blink: true, wobble: true };
+// 0..1..0 over one loop (sin^2), so the loop is seamless.
+export const hop = (f = ANIM.f, n = ANIM.n) => Math.sin(Math.PI * f / n) ** 2;
 export function rng(seed) { let s = (seed >>> 0) || 1; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 export function rr(x, x0, y0, w, h, r) {
   r = Math.min(r, w / 2, h / 2); x.beginPath(); x.moveTo(x0 + r, y0); x.arcTo(x0 + w, y0, x0 + w, y0 + h, r); x.arcTo(x0 + w, y0 + h, x0, y0 + h, r); x.arcTo(x0, y0 + h, x0, y0, r); x.arcTo(x0, y0, x0 + w, y0, r); x.closePath();
@@ -68,13 +73,15 @@ export function pocket(x, I, cx, by, h, o = {}) {
   const iw = img.width, ih = img.height;
   const k = o.exact ? h / ih : Math.max(1, Math.floor(Math.min(h / ih, (o.maxW ?? h * 1.45) / iw))) * (o.shrink || 1);
   const w = iw * k, hh = ih * k, x0 = Math.round(cx - w / 2), y0 = Math.round(by - hh);
+  // Bob: up to 3 art pixels (fewer on very big sprites, so the hop stays under ~8% of the height), snapped to whole art pixels.
+  let dy = 0; if (ANIM.on && ANIM.bob && !o.still) { const amp = Math.max(1, Math.min(3, Math.floor(h * .08 / k))); dy = -Math.round(amp * hop()) * k; }
   if (o.shadow !== false) { x.save(); x.fillStyle = o.shadowCol || 'rgba(0,0,0,.22)'; x.beginPath(); x.ellipse(cx, by - 2, w * .38, Math.max(6, w * .07), 0, 0, Math.PI * 2); x.fill(); x.restore(); }
   if (o.glow) { x.save(); x.fillStyle = rad(x, cx, y0 + hh / 2, 0, Math.max(w, hh) * .85, [[0, o.glow], [1, 'rgba(255,255,255,0)']]); x.fillRect(cx - w * 1.2, y0 - hh * .6, w * 2.4, hh * 2.2); x.restore(); }
   x.save(); x.imageSmoothingEnabled = false; if (o.alpha != null) x.globalAlpha = o.alpha;
   if (o.rot) { x.translate(cx, y0 + hh / 2); x.rotate(o.rot); x.translate(-cx, -(y0 + hh / 2)); }
   if (o.flip) { x.translate(x0 + w / 2, 0); x.scale(-1, 1); x.translate(-(x0 + w / 2), 0); }
-  x.drawImage(img, x0, y0, w, hh); x.restore();
-  return { w, h: hh, top: y0, left: x0, k };
+  x.drawImage(img, x0, y0 + dy, w, hh); x.restore();
+  return { w, h: hh, top: y0, left: x0, k, dy };
 }
 // Pocket's square card scene (80x80 pixel art) or a fallback.
 export function scene(x, I, X, Y, S, o = {}) {
@@ -87,7 +94,7 @@ export function scene(x, I, X, Y, S, o = {}) {
     x.fillStyle = rad(x, X + S / 2, Y + S * .5, S * .05, S * .55, [[0, 'rgba(255,240,190,.85)'], [1, 'rgba(255,240,190,0)']]); x.fillRect(X, Y, S, S);
     for (const [a, b, c] of [[.12, .92, .2], [.4, .98, .22], [.7, .95, .24], [.95, .9, .2], [.5, .9, .2]]) cloud(x, X + a * S, Y + b * S, c * S, N ? '#e2dcff' : '#fff', N ? 'rgba(90,80,170,.5)' : 'rgba(170,160,230,.45)');
     const p = pocket(x, I, X + S / 2, Y + S * .86, S * .62, { shadow: false });
-    x.save(); x.lineWidth = Math.max(4, S * .022); x.strokeStyle = '#ffd45e'; x.shadowColor = 'rgba(255,200,60,.9)'; x.shadowBlur = S * .04; x.beginPath(); x.ellipse(X + S / 2, p.top - S * .045, Math.max(S * .1, p.w * .3), S * .028, 0, 0, 7); x.stroke(); x.restore();
+    x.save(); x.lineWidth = Math.max(4, S * .022); x.strokeStyle = '#ffd45e'; x.shadowColor = 'rgba(255,200,60,.9)'; x.shadowBlur = S * .04; x.beginPath(); x.ellipse(X + S / 2, p.top + (p.dy || 0) - S * .045, Math.max(S * .1, p.w * .3), S * .028, 0, 0, 7); x.stroke(); x.restore();
   } else if (I && I.card) x.drawImage(I.card, X, Y, S, S);
   else { x.fillStyle = lin(x, 0, Y, 0, Y + S, [[0, '#9fd3ff'], [.7, '#d8f0ff'], [.7, '#79c25a'], [1, '#4e9a3e']]); x.fillRect(X, Y, S, S); if (I) pocket(x, I, X + S / 2, Y + S * .9, S * .7); }
   x.restore();

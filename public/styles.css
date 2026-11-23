@@ -353,6 +353,7 @@ body[data-view=meme] .title{background:linear-gradient(100deg,#ffe3a3 10%,#ff9fc
 .mm-idrow input:focus{border-color:var(--accent)}
 .mm-idrow.sm{margin-top:8px}.mm-idrow.sm input{height:42px;font-size:20px}
 .mm-seg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.mm-box[hidden],.mm-seg[hidden],.mm-seg button[hidden]{display:none}
 .mm-seg button{flex:1 1 auto;min-height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--chipline);background:transparent;color:var(--muted);font-weight:600;font-size:13.5px;cursor:pointer}
 .mm-seg button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#2a1433}
 .mm-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}

@@ -92,5 +92,52 @@ export function buddy(I, base, mask) {
   for (let y = 0; y < WORK; y++) for (let x = 0; x < WORK; x++) { const i = (y * WORK + x) * 4;
     if (d[i + 3] > 16 && !(d[i] >= 245 && d[i + 1] >= 245 && d[i + 2] >= 245)) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; } }
   const bbox = bx1 >= bx0 ? [bx0, by0, bx1 + 1, by1 + 1] : [0, 0, WORK, WORK];
-  const out = { art, accent: shades(palette[0])[1], bbox, sp }; cache.set(key, out); if (cache.size > 60) cache.delete(cache.keys().next().value); return out;
+  const out = { art, accent: shades(palette[0])[1], bbox, sp, body: px, lid: shades(bodyCol), hat: { sc, sw, sh, cx, cy, cw, ch } }; cache.set(key, out); if (cache.size > 60) cache.delete(cache.keys().next().value); return out;
+}
+
+// ---------------- "Make it move" (animated GIF frames) ----------------
+// /hybrid/eyes.png marks the inside of each big eye (R 255 = left, R 128 = right), cut from base.png.
+const OUTLINE = [3, 2, 3]; // the art's own outline colour
+export const PAD = 16;     // frame canvases are WORK + 2*PAD square, so the hop and the hat sway never clip
+const eyeMemo = new WeakMap();
+function eyeInfo(eyes) {
+  if (eyeMemo.has(eyes)) return eyeMemo.get(eyes);
+  const c = document.createElement('canvas'); c.width = c.height = WORK; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(eyes, 0, 0);
+  const d = x.getImageData(0, 0, WORK, WORK).data, E = [[], []];
+  for (let i = 0; i < d.length; i += 4) { const r = d[i]; if (r > 200) E[0].push(i); else if (r > 100 && r < 160) E[1].push(i); }
+  const out = E.filter((e) => e.length).map((idx) => { let x0 = WORK, y0 = WORK, x1 = 0, y1 = 0; const set = new Set(idx);
+    for (const i of idx) { const p = i / 4, xx = p % WORK, yy = (p - xx) / WORK; if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; }
+    return { idx, set, x0, y0, x1, y1 }; });
+  eyeMemo.set(eyes, out); return out;
+}
+// Body pixels with the eyes half shut (lid 1) or shut (lid 2): lids in the body's mid tone, a pixel line in the outline colour.
+function lidded(b, eyes, lid) {
+  const key = 'lid' + lid; if (b[key]) return b[key];
+  const px = new Uint8ClampedArray(b.body), L = b.lid[1], put = (i, c) => { px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255; };
+  for (const e of eyeInfo(eyes)) {
+    const cy = Math.round((e.y0 + e.y1) / 2), cx = (e.x0 + e.x1) / 2, hw = (e.x1 - e.x0) / 2;
+    if (lid === 1) { // upper lid down to the middle, with a straight 6px lash line
+      for (const i of e.idx) { const p = i / 4, y = (p - p % WORK) / WORK; if (y < cy - 3) put(i, L); else if (y < cy + 3) put(i, OUTLINE); }
+    } else {          // fully shut: lid fills the eye, a 6px line sagging gently in the middle (a happy closed eye)
+      for (const i of e.idx) put(i, L);
+      for (let x = Math.ceil(e.x0 + 6); x <= e.x1 - 6; x++) { const u = (x - cx) / (hw - 6), yc = cy - 4 + 2 * Math.round(2.5 * (1 - u * u));
+        for (let y = yc - 3; y < yc + 3; y++) { const i = (y * WORK + x) * 4; if (e.set.has(i)) put(i, OUTLINE); } }
+    }
+  }
+  const c = document.createElement('canvas'); c.width = c.height = WORK; c.getContext('2d').putImageData(new ImageData(px, WORK, WORK), 0, 0);
+  return (b[key] = c);
+}
+function bodyCanvas(b) { if (b.lid0) return b.lid0; const c = document.createElement('canvas'); c.width = c.height = WORK; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(b.body), WORK, WORK), 0, 0); return (b.lid0 = c); }
+// One animation frame on a (WORK + 2*PAD)^2 canvas: dy = whole-pixel hop (<= 0), lid = 0/1/2, tilt = hat sway in px at its top.
+// The sway is a per-row shear (the hat's bottom row stays on the head), so every pixel stays a crisp square.
+let fc = null;
+export function buddyFrame(b, eyes, { dy = 0, lid = 0, tilt = 0 } = {}) {
+  const S = WORK + 2 * PAD; if (!fc) { fc = document.createElement('canvas'); fc.width = fc.height = S; }
+  const x = fc.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, S, S); x.imageSmoothingEnabled = false;
+  x.drawImage(lid && eyes ? lidded(b, eyes, lid) : bodyCanvas(b), PAD, PAD + dy);
+  const { sc, sw, sh, cx, cy, cw, ch } = b.hat;
+  for (let r = 0; r < sh; r++) { const y0 = Math.round(r * ch / sh), y1 = Math.round((r + 1) * ch / sh); if (y1 <= y0) continue;
+    const dx = Math.round(tilt * (1 - (r + 0.5) / sh));
+    x.drawImage(sc, 0, r, sw, 1, PAD + cx + dx, PAD + cy + y0 + dy, cw, y1 - y0); }
+  return fc;
 }
