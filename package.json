@@ -1,0 +1,14 @@
+{
+  "name": "pocket-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "snapshot": "node scripts/snapshot.mjs && node scripts/build-data.mjs && python3 scripts/atlas.py",
+    "build-data": "node scripts/build-data.mjs",
+    "dev": "node scripts/dev-server.mjs",
+    "atlas": "python3 scripts/atlas.py"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

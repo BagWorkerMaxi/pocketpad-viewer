@@ -1,0 +1,167 @@
+// Meme Maker copy. Every line is tagged with the kinds it fits, using the real lifecycle from the API:
+//   s = seed   (never watered: lastWateredAt null, not dead. No streak, health clock or heaven.)
+//   p = plant  (watered at least once, not dead. Has streak, health, a 72h clock and can die.)
+//   r = spirit (dead = true and revealed: has name, tier, lore, spirit rank and death order.
+//               No watering, no clock, no health, no death jokes: it's in Heaven now.)
+// Every {token} is filled from real data; a line whose tokens can't all be filled is skipped.
+// intact: watered under 48h ago (48h+ without water means a whole day was missed, so the API's streak number is stale).
+// a: 1 = only while the plant is alive (hidden once it is past its 72h clock). w: extra real-data condition. p: priority (higher = more specific, shown first). tag: shown in the UI.
+export const JOKES = [
+  // ---- plants: streaks (streak resets when a day is missed, so "never missed" needs streak == days watered)
+  { k: 'p', a: 1, p: 6, tag: 'Long streak', w: (f) => f.streak >= 7 && f.intact, t: '{streak} days straight. more consistent than my gym routine' },
+  { k: 'p', a: 1, p: 6, tag: 'Long streak', w: (f) => f.streak >= 7 && f.intact, t: '{streak}-day streak. this plant has more discipline than me' },
+  { k: 'p', a: 1, p: 7, tag: 'Never missed a day', w: (f) => f.streak >= 3 && f.streak === f.wd && f.since != null && f.since < 48 * 36e5, t: 'watered every single day since it was planted. couldn\u2019t be me (it is me)' },
+  { k: 'p', a: 1, p: 5, tag: 'Long streak', w: (f) => f.streak >= 5 && f.intact, t: '{streak} days of hydration. my therapist says this counts as self-care' },
+  { k: 'p', a: 1, p: 5, tag: 'Long streak', w: (f) => f.streak >= 5 && f.intact, t: 'day {streak} of the streak. the watering can knows my name now' },
+  { k: 'p', a: 1, p: 3, tag: 'Building a streak', w: (f) => f.streak >= 2 && f.streak < 7 && f.intact, t: '{streak} days in a row. it\u2019s not a habit, it\u2019s a lifestyle' },
+  { k: 'p', a: 1, p: 3, tag: 'Building a streak', w: (f) => f.streak >= 2 && f.streak < 7 && f.intact, t: '{streak}-day streak. building generational hydration' },
+  { k: 'p', p: 5, tag: 'Streak reset', w: (f) => f.streak <= 1 && f.wd >= 3, t: 'watered {wd} days total. streak: {streak}. we don\u2019t talk about it' },
+  { k: 'p', a: 1, p: 3, tag: 'New sprout', w: (f) => f.wd <= 1, t: 'day one. big plans. huge plans.' },
+  { k: 'p', a: 1, p: 3, tag: 'New sprout', w: (f) => f.wd <= 2, t: 'freshly planted and i\u2019m already emotionally attached' },
+  // ---- plants: the 72h clock
+  { k: 'p', p: 9, tag: 'Under 12h left', w: (f) => f.left > 0 && f.left < 12 * 36e5, t: '{left} left on the clock. it\u2019s fine. i\u2019ll water it tomorrow' },
+  { k: 'p', p: 9, tag: 'Under 12h left', w: (f) => f.left > 0 && f.left < 12 * 36e5, t: 'plant: {left} to live. me: one more episode' },
+  { k: 'p', p: 9, tag: 'Under 12h left', w: (f) => f.left > 0 && f.left < 12 * 36e5, t: '{left} left. this is a cry for help (and water)' },
+  { k: 'p', p: 8, tag: 'Under 24h left', w: (f) => f.left > 0 && f.left < 24 * 36e5, t: 'less than a day left. we ride at dawn (to the watering can)' },
+  { k: 'p', a: 1, p: 6, tag: 'Thirsty', w: (f) => f.hs === 'thirsty', t: 'watered {since}. thirsty in every sense of the word' },
+  { k: 'p', p: 9, tag: 'Past its 72h clock', w: (f) => f.left != null && f.left <= 0, t: 'past its 72h clock. the reveal is loading…' },
+  { k: 'p', p: 6, tag: 'Just watered', w: (f) => f.since != null && f.since < 2 * 36e5, t: 'watered {since}. hydrated and dangerous' },
+  { k: 'p', p: 4, tag: 'Just watered', w: (f) => f.since != null && f.since < 6 * 36e5, t: 'fresh water, fresh fit, fresh {kind}' },
+  // ---- plants: health, in pocketpad.io's own words (hs: fresh / heal1 / heal2 / thirsty / wilting / critical / past)
+  { k: 'p', a: 1, p: 7, tag: 'Wilting', w: (f) => f.hs === 'wilting', t: 'status: wilting. surviving on vibes alone' },
+  { k: 'p', a: 1, p: 7, tag: 'Dying', w: (f) => f.hs === 'critical', t: 'status: dying. running on pure spite' },
+  { k: 'p', a: 1, p: 7, tag: 'Healing', w: (f) => f.hs === 'heal1' || f.hs === 'heal2', t: 'watered {since}. {healWord}, and climbing' },
+  { k: 'p', a: 1, p: 4, tag: 'Thirsty', w: (f) => f.hs === 'thirsty', t: 'status: thirsty. same, honestly' },
+  { k: 'p', a: 1, p: 4, tag: 'Healthy', w: (f) => f.hs === 'fresh', t: 'status: healthy. glowing. thriving. unbothered.' },
+  { k: 'p', p: 1, tag: 'Plant', w: () => true, t: 'touch grass? i grow it' },
+  // ---- rarity (for spirits, "Plant rarity" and "Grew from" describe the plant it came from)
+  { k: 'sp', p: 8, tag: 'Top rarity', w: (f) => f.rarity === 'Legendary' || f.rarity === 'One of One', t: '{rarity} {kind}. you wouldn\u2019t understand' },
+  { k: 'r', p: 8, tag: 'Top rarity', w: (f) => f.rarity === 'Legendary' || f.rarity === 'One of One', t: 'grew from {aRarity} {kind}. you wouldn\u2019t understand' },
+  { k: 'p', p: 6, tag: 'Epic rarity', w: (f) => f.rarity === 'Epic', t: 'epic {kind}. the main character of the garden' },
+  { k: 's', p: 6, tag: 'Epic rarity', w: (f) => f.rarity === 'Epic', t: 'epic {kind} seed. main character energy, still underground' },
+  { k: 'spr', p: 2, tag: 'Common rarity', w: (f) => f.rarity === 'Common', t: 'common? i prefer \u201cclassic\u201d' },
+  { k: 'spr', p: 8, tag: 'Trait under 1%', w: (f) => f.share != null && f.share < 0.01, t: '{trait}: only {sharePct} of Pockets have this. built different' },
+  { k: 'spr', p: 7, tag: 'Trait under 5%', w: (f) => f.share != null && f.share < 0.05, t: '{trait} ({sharePct}). rarer than my good decisions' },
+  { k: 'spr', p: 7, tag: 'Trait under 5%', w: (f) => f.share != null && f.share < 0.05, t: 'only {sharePct} have {trait}. flex responsibly' },
+  // ---- seeds (never planted)
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: 'still a seed. manifesting.' },
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: 'not planted yet. waiting for the perfect moment (any day now)' },
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: 'potential energy: 100%. kinetic energy: 0%' },
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: 'they told me to touch grass. i\u2019m a seed. i am the grass (eventually).' },
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: '{kind} loading\u2026 please plant to continue' },
+  { k: 's', p: 3, tag: 'Unplanted seed', w: () => true, t: 'no deadlines. no stress. no responsibilities. seed life.' },
+  // ---- spirits (in Heaven: names, lore, rank, the order they rose)
+  { k: 'r', p: 9, tag: 'Early spirit', w: (f) => f.dn != null && f.dn <= 10, t: 'the {dnOrd} spirit to ever rise. OG of the afterlife' },
+  { k: 'r', p: 8, tag: 'Early spirit', w: (f) => f.dn != null && f.dn <= 25, t: '{dnOrd} to reach heaven. early to everything' },
+  { k: 'r', p: 6, tag: 'Quick ascent', w: (f) => f.wd != null && f.wd <= 1, t: 'watered as a plant for {wdDays}. speedran the whole garden' },
+  { k: 'r', p: 5, tag: 'Long garden life', w: (f) => f.wd != null && f.wd >= 6, t: 'watered as a plant for {wdDays}, then retired to the clouds' },
+  { k: 'r', p: 4, tag: 'Spirit', w: () => true, t: '{name} has entered the chat (from heaven)' },
+  { k: 'r', p: 4, tag: 'Spirit', w: () => true, t: 'spirit rank #{rkFmt}. heaven has a leaderboard and i\u2019m on it' },
+  { k: 'r', p: 3, tag: 'Spirit', w: () => true, t: 'ascended. got a name. got lore. no regrets' },
+  { k: 'r', p: 3, tag: 'Spirit', w: () => true, t: 'was {aKind}. now {aName}. character development' },
+  // ---- market (live listings and floor)
+  { k: 'spr', p: 7, tag: 'Listed near floor', w: (f) => f.ratio != null && f.ratio <= 1.05, t: 'listed at {price} ETH. right at the floor. priced to move' },
+  { k: 'spr', p: 7, tag: 'Listed way above floor', w: (f) => f.ratio != null && f.ratio >= 3, t: 'listed at {price} ETH. floor is {floor}. i know what i have' },
+  { k: 'spr', p: 5, tag: 'Listed for sale', w: (f) => f.listed, t: 'for sale: {price} ETH. emotional damage not included' },
+  { k: 'spr', p: 5, tag: 'Listed for sale', w: (f) => f.listed, t: 'listed at {price} ETH. make me an offer i can\u2019t refuse' },
+  { k: 'spr', p: 2, tag: 'Not for sale', w: (f) => !f.listed, t: 'not for sale. we\u2019re family' },
+  // ---- anything
+  { k: 'spr', p: 1, tag: 'Classic', w: () => true, t: 'pocket #{id}. no notes.' },
+  { k: 'spr', p: 1, tag: 'Classic', w: () => true, t: 'my portfolio is mostly emotional' },
+  { k: 'spr', p: 1, tag: 'Classic', w: () => true, t: 'i don\u2019t have a strategy. i have a pocket.' },
+  { k: 'spr', p: 1, tag: 'Classic', w: () => true, t: 'gm from pocket #{id}' },
+  { k: 'spr', p: 1, tag: 'Classic', w: () => true, t: 'unofficially the best pocket on the chain' },
+];
+
+// Classic top/bottom captions: [top, bottom, kinds, optional real-data condition].
+const L = (f) => f.listed, NL = (f) => !f.listed, NP = (f) => !f.past; // NP: needs a plant that can still be watered
+export const CAPTIONS = [
+  // plants
+  ['watered it once', 'now i call myself a gardener', 'p', (f) => f.wd === 1],
+  ['me at 71h 59m', 'remembering i own a plant', 'p', NP],
+  ['one does not simply', 'skip a day of watering', 'p', NP],
+  ['not sure if thirsty', 'or just dramatic', 'p', (f) => f.hs === 'thirsty' || f.hs === 'wilting' || f.hs === 'critical'],
+  ['nobody:', 'me at 3am: checking my plant\u2019s countdown', 'p'],
+  ['i\u2019ll water it tomorrow', '\u2013 famous last words', 'p'],
+  ['when the streak hits double digits', 'and you start a podcast', 'p', (f) => f.streak >= 10 && f.intact],
+  ['my plant', 'my rules', 'p'],
+  ['hydration check', 'passed', 'p', (f) => f.hs === 'fresh' || f.hs === 'heal1' || f.hs === 'heal2'],
+  ['three days without water', 'heaven gets a new member', 'p'],
+  ['death is not the end', 'it\u2019s a reveal', 'p'],
+  ['bro really let it die', 'for the reveal', 'p'],
+    ['you either water it forever', 'or let it go and meet its spirit', 'p'],
+  ['me watering my plant', 'like it owes me money', 'p', NP],
+  ['set an alarm', 'for my plant', 'p', NP],
+  ['canceled plans', 'had to water the plant', 'p', NP],
+  ['gm', 'did you water', 'p', NP],
+  ['water first', 'coffee second', 'p', NP],
+  ['i don\u2019t always water my plant', 'but when i do it\u2019s at 71 hours', 'p', NP],
+  ['portfolio down bad', 'plant still thriving', 'p', (f) => f.hs === 'fresh'],
+  ['wen spirit', 'wen heaven', 'p'],
+  ['ser', 'this is a garden', 'p'],
+  ['buy the seed', 'water the dip', 'p'],
+  ['paper hands', 'dry soil', 'p'],
+  ['have you tried', 'just watering it', 'p', NP],
+  ['i am once again', 'asking you to water your plant', 'p', NP],
+  ['plants in my garden', 'plants in my heart', 'p'],
+  ['planted it', 'and immediately became a parent', 'p'],
+  ['my plant\u2019s streak', 'is longer than my relationship', 'p', (f) => f.streak >= 3 && f.intact],
+  ['they call me', 'the watering can whisperer', 'p', NP],
+  ['every day i water', 'every day i get stronger', 'p', NP],
+  ['look at me', 'i\u2019m the gardener now', 'p'],
+  ['ok but', 'have you seen my streak', 'p', (f) => f.streak >= 5 && f.intact],
+  ['too rare to sell', 'too pretty to water late', 'p', (f) => !f.listed && !f.past],
+  ['i water', 'therefore i am', 'p', NP],
+  ['the chart went down', 'my plant went up', 'p'],
+  // seeds
+  ['seed holders', 'still waiting for their moment', 's'],
+  ['bought the seed', 'never planted it', 's'],
+    ['seed', 'unlimited potential, zero effort', 's'],
+  ['the soil', 'was never the limit', 's'],
+  ['minted a seed', 'gained zero responsibilities', 's'],
+  ['still a seed', 'still a vibe', 's'],
+  ['they said plant it', 'i said not yet', 's'],
+  ['sleeping in the soil', 'like it\u2019s a sunday', 's'],
+  ['unplanted', 'undefeated', 's'],
+  ['the soil is cozy', 'i\u2019m staying', 's'],
+  ['patience', 'is a seed strategy', 's'],
+  ['my seed\u2019s whole personality', 'potential', 's'],
+  ['diamond hands', 'green thumbs (soon)', 's'],
+  // spirits
+  ['spirit holders', 'already living their afterlife', 'r'],
+  ['it didn\u2019t leave', 'it ascended', 'r'],
+  ['stop asking about my plant', 'it\u2019s in a better place', 'r'],
+  ['heaven is real', 'and it\u2019s on robinhood chain', 'r'],
+  ['up here', 'the vibes are immaculate', 'r'],
+  ['spirits be like', '\u201ci used to be {aKind}\u201d', 'r'],
+  ['my spirit has lore', 'i have student loans', 'r'],
+  ['i see spirits', 'they used to be plants', 'r'],
+  ['planted it, then forgot it', 'three days later: heaven', 'r', (f) => f.wd === 1],
+  ['ascended', 'and never looked back', 'r'],
+  ['my spirit', 'has better lore than me', 'r'],
+  ['meet {name}', 'heaven\u2019s newest celebrity', 'r', (f) => f.newest],
+  ['halo on', 'worries off', 'r'],
+  ['cloud nine', 'is my home address', 'r'],
+  // two kinds
+  ['when the pocket is rarer', 'than your whole wallet', 'sp'],
+  ['seeds vs spirits', 'the before and after nobody asked for', 'sr'],
+  ['average gardener', 'average spirit enjoyer', 'pr'],
+  // everyone
+  ['floor price', 'is just a suggestion', 'spr'],
+  ['sold at floor', 'it mooned the next day', 'spr'],
+  ['listed it at 100x floor', 'manifesting', 'spr', (f) => f.ratio != null && f.ratio >= 3],
+  ['not financial advice', 'botanical advice', 'spr'],
+  ['flipping pockets', 'like pancakes', 'spr'],
+  ['someone listed under floor', 'and i wasn\u2019t awake', 'spr'],
+  ['me explaining pocket pad', 'to my family at dinner', 'spr'],
+  ['this pocket', 'is not for sale (make an offer)', 'spr', NL],
+  ['listed it', 'now refreshing the page every 5 seconds', 'spr', L],
+  ['me and my pocket', 'against the world', 'spr'],
+];
+
+// Words a meme must never show for a kind (used by the automated audit and as a last-resort guard).
+export const BANNED = {
+  s: /water(?!lily)|streak|thirst|hydrat|countdown|71h|71:|\bdie[sd]?\b|dying|\bdead\b|death|\brip\b|r\.i\.p|heaven|halo|health|\bhp\b|ascend|afterlife|graveyard|\bclock\b|lived/i,
+  p: /made it to heaven|ascended|afterlife|unplanted|not planted|never planted|still a seed|spirit rank|rose as|\blived\b|#\d+ to rise/i,
+  r: /water(?!ed as a plant|lily)|streak|thirst|hydrat|countdown|71h|71:|\bdie[sd]?\b|dying|\bdead\b|death|\brip\b|r\.i\.p|graveyard|health|\bhp\b|\bclock\b|\blived\b|alive|unplanted|still a seed/i,
+};

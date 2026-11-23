@@ -1,0 +1,5 @@
+/data
+/recon
+/screenshots
+*.log
+scripts/shots.py

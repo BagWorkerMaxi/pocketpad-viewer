@@ -1,0 +1,96 @@
+// "Pocket Buddy": Shreyas's pixel seed character, body tinted with the Pocket's own colour and the
+// Pocket's sprite worn on its head as a hat. The eyes stay exactly as in the original art.
+// Port of the approved prototype (distort-test/make_samples.py). The base art is pre-cut once into
+// /hybrid/base.png (256x256 work canvas, sprout removed) and /hybrid/mask.png (R = body, G = soil).
+const WORK = 256;
+const GEO = { headCx: 126, headTop: 104, bodyLeft: 59, bodyRight: 195 };
+const FALLBACK = [194, 126, 79];
+
+// Python round(): ties go to the even neighbour, so the port lands on the same pixels.
+const pyRound = (v) => { const f = Math.floor(v), d = v - f; return d > 0.5 ? f + 1 : d < 0.5 ? f : (f % 2 === 0 ? f : f + 1); };
+const lumOf = (r, g, b) => (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+function hsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), df = mx - mn; let h = 0;
+  if (df) h = mx === r ? (((g - b) / df) % 6 + 6) % 6 * 60 : mx === g ? ((b - r) / df + 2) * 60 : ((r - g) / df + 4) * 60;
+  return [h, mx ? df / mx : 0, mx];
+}
+function fromHsv(H, S, V) {
+  S = Math.max(0, Math.min(1, S)); V = Math.max(0, Math.min(1, V));
+  const C = V * S, X = C * (1 - Math.abs((H / 60) % 2 - 1)), m = V - C;
+  const [r, g, b] = H < 60 ? [C, X, 0] : H < 120 ? [X, C, 0] : H < 180 ? [0, C, X] : H < 240 ? [0, X, C] : H < 300 ? [X, 0, C] : [C, 0, X];
+  return [r, g, b].map((c) => Math.max(0, Math.min(255, pyRound((c + m) * 255))));
+}
+export function shades(rgb) {
+  const [h, s, v] = hsv(...rgb);
+  return [fromHsv(h, Math.min(1, s * 1.15), Math.max(0.12, v * 0.42)), fromHsv(h, s, v), fromHsv(h, Math.max(0, s * 0.72), Math.min(1, v * 1.18 + 0.12))];
+}
+// Characteristic colours of a sprite: dull wood/pot browns down-weighted, upper pixels favoured.
+function spriteColors(d, w, h, n = 5) {
+  const weights = new Map();
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2]; if (d[i + 3] < 200) continue;
+    const l = lumOf(r, g, b); if (!(l > 0.12 && l < 0.95)) continue;
+    const [hu, sa] = hsv(r, g, b), yn = 1 - y / Math.max(1, h - 1);
+    const key = [r, g, b].map((c) => (c >> 4) * 16 + 8).join(',');
+    const dull = hu >= 15 && hu <= 45 && sa < 0.55;
+    weights.set(key, (weights.get(key) || 0) + (0.25 + sa) * (1.15 + 0.55 * yn) * (dull ? 0.28 : 1));
+  }
+  const ranked = [...weights].sort((a, b) => b[1] - a[1]), picked = [];
+  for (const [k] of ranked) { const c = k.split(',').map(Number);
+    if (picked.some((p) => (c[0] - p[0]) ** 2 + (c[1] - p[1]) ** 2 + (c[2] - p[2]) ** 2 < 1600)) continue;
+    picked.push(c); if (picked.length >= n) break; }
+  return picked.length ? picked : [FALLBACK];
+}
+function percentile(sorted, q) { const p = (sorted.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return sorted[lo] + (sorted[hi] - sorted[lo]) * (p - lo); }
+// Luminance-preserving map onto dark / mid / light shades of one colour. Returns new RGB per masked pixel.
+function tint(src, idx, colour) {
+  const pal = shades(colour), lums = idx.map((i) => lumOf(src[i], src[i + 1], src[i + 2])), s = [...lums].sort((a, b) => a - b);
+  const lo = percentile(s, 0.05), hi = percentile(s, 0.95);
+  return idx.map((i, k) => { const t = hi - lo < 0.05 ? Math.max(0, Math.min(1, lums[k])) : Math.max(0, Math.min(1, (lums[k] - lo) / (hi - lo)));
+    const [a, b, u] = t <= 0.5 ? [pal[0], pal[1], t / 0.5] : [pal[1], pal[2], (t - 0.5) / 0.5];
+    return [0, 1, 2].map((c) => Math.max(0, Math.min(255, Math.floor(a[c] + (b[c] - a[c]) * u)))); });
+}
+
+const prep = new WeakMap();
+function basePrep(base, mask) {
+  if (prep.has(base)) return prep.get(base);
+  const read = (im) => { const c = document.createElement('canvas'); c.width = c.height = WORK; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0); return x.getImageData(0, 0, WORK, WORK).data; };
+  const px = read(base), mk = read(mask), body = [], soil = [];
+  for (let i = 0; i < px.length; i += 4) { if (mk[i] > 127) body.push(i); else if (mk[i + 1] > 127) soil.push(i); }
+  const out = { px, body, soil }; prep.set(base, out); return out;
+}
+function nnFit(w, h, maxW, maxH) {
+  let s = Math.max(1, Math.min(Math.floor(maxW / w), Math.floor(maxH / h)));
+  if (w * s > maxW || h * s > maxH) { const f = Math.min(maxW / w, maxH / h); return [Math.max(1, pyRound(w * f)), Math.max(1, pyRound(h * f))]; }
+  return [w * s, h * s];
+}
+const cache = new Map();
+// Returns { art: 256x256 canvas, accent: [r,g,b] } for one Pocket. Cached per sprite.
+export function buddy(I, base, mask) {
+  const sp = I && I.sprite; if (!sp || !base || !mask) return null;
+  const key = `${I.id}:${I.seg}:${I.stem}:${I.night ? 1 : 0}`; if (cache.has(key) && cache.get(key).sp === sp) return cache.get(key);
+  const sw = sp.naturalWidth || sp.width, sh = sp.naturalHeight || sp.height;
+  const sc = document.createElement('canvas'); sc.width = sw; sc.height = sh; const sx = sc.getContext('2d', { willReadFrequently: true }); sx.drawImage(sp, 0, 0);
+  // Seeds and plants: the pot or shelf drowns out the seed skin and foliage, so sample the top 60%.
+  const sampleH = I.seg !== 'reveal' && sh >= 16 ? Math.floor(sh * 0.6) : sh;
+  const palette = spriteColors(sx.getImageData(0, 0, sw, sampleH).data, sw, sampleH);
+  const ok = (c, vmin) => { const [h, s, v] = hsv(...c); return v >= vmin && !(h >= 15 && h <= 45 && s < 0.62); };
+  const bodyCol = palette.find((c) => ok(c, 0.5)) || palette.find((c) => ok(c, 0.38)) || palette[0];
+  const darkCol = palette.reduce((m, c) => (lumOf(...c) < lumOf(...m) ? c : m), palette[0]);
+
+  const B = basePrep(base, mask), px = new Uint8ClampedArray(B.px);
+  tint(B.px, B.body, bodyCol).forEach((c, k) => { const i = B.body[k]; px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; });
+  if (B.soil.length) tint(B.px, B.soil, darkCol).forEach((c, k) => { const i = B.soil[k];
+    for (let j = 0; j < 3; j++) px[i + j] = Math.floor(Math.fround(Math.fround(B.px[i + j] * Math.fround(0.45)) + Math.fround(c[j] * Math.fround(0.55)))); });
+  const art = document.createElement('canvas'); art.width = art.height = WORK; const ax = art.getContext('2d', { willReadFrequently: true }); ax.putImageData(new ImageData(px, WORK, WORK), 0, 0);
+  // The hat: the Pocket's own sprite, nearest-neighbour, sitting on the head and overlapping the scalp a little.
+  const headW = Math.max(8, GEO.bodyRight - GEO.bodyLeft), [cw, ch] = nnFit(sw, sh, Math.floor(headW * 0.85), Math.floor(WORK * 0.42));
+  const cx = pyRound(GEO.headCx - cw / 2); let cy = pyRound(GEO.headTop + 4 - ch); if (cy < 2) cy = 2;
+  ax.imageSmoothingEnabled = false; ax.drawImage(sc, 0, 0, sw, sh, cx, cy, cw, ch);
+  // Bounding box of everything that isn't the white background, for centring.
+  const d = ax.getImageData(0, 0, WORK, WORK).data; let bx0 = WORK, by0 = WORK, bx1 = 0, by1 = 0;
+  for (let y = 0; y < WORK; y++) for (let x = 0; x < WORK; x++) { const i = (y * WORK + x) * 4;
+    if (d[i + 3] > 16 && !(d[i] >= 245 && d[i + 1] >= 245 && d[i + 2] >= 245)) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; } }
+  const bbox = bx1 >= bx0 ? [bx0, by0, bx1 + 1, by1 + 1] : [0, 0, WORK, WORK];
+  const out = { art, accent: shades(palette[0])[1], bbox, sp }; cache.set(key, out); if (cache.size > 60) cache.delete(cache.keys().next().value); return out;
+}

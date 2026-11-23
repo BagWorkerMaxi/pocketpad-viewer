@@ -1,0 +1,14 @@
+import { writeFileSync } from 'node:fs';
+import { API, META, SUPPLY, getJSON, pool, owners, compactState } from '../lib/pp.js';
+const ids = Array.from({ length: SUPPLY }, (_, i) => i + 1);
+const t0 = Date.now();
+const [collection, stats] = await Promise.all([getJSON(`${API}/collections/pocket`), getJSON(`${API}/market/pocket/stats`)]);
+let done = 0;
+const state = await pool(ids, 8, async (id) => { const j = await getJSON(`${API}/pockets/pocket/${id}`); if (++done % 250 === 0) console.log('state', done); return compactState(j); });
+done = 0;
+const meta = await pool(ids, 8, async (id) => { const j = await getJSON(`${META}/${id}`); if (++done % 250 === 0) console.log('meta', done); return { name: j.name, description: j.description, image: j.image, external_url: j.external_url, attributes: j.attributes }; });
+const chainOwners = await owners(ids);
+const pockets = ids.map((id, i) => ({ id, ...state[i], chainOwner: chainOwners[id] || null, meta: meta[i] }));
+const out = { generatedAt: new Date().toISOString(), collection, stats, pockets };
+writeFileSync(new URL('../data/raw.json', import.meta.url), JSON.stringify(out));
+console.log('done in', ((Date.now() - t0) / 1000).toFixed(0), 's');

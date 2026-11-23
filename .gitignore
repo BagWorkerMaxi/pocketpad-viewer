@@ -1,0 +1,8 @@
+node_modules
+/recon
+/screenshots
+/data
+*.log
+.vercel
+.env*
+/.github
