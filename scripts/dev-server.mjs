@@ -12,8 +12,15 @@ createServer(async (req, res) => {
       const name = url.pathname.slice(5).replace(/[^a-z]/g, '');
       const key = url.pathname + url.search, hit = cache.get(key);
       let r;
-      if (hit && Date.now() - hit.t < 30000) r = hit.r.clone();
-      else { const mod = await import(`../api/${name}.js`); r = await mod.GET(new Request(url)); cache.set(key, { t: Date.now(), r: r.clone() }); }
+      const live = name === 'scores';
+      if (!live && req.method === 'GET' && hit && Date.now() - hit.t < 30000) r = hit.r.clone();
+      else {
+        const mod = await import(`../api/${name}.js`), fn = mod[req.method];
+        if (!fn) { res.writeHead(405); res.end(); return; }
+        const body = req.method === 'GET' ? undefined : await new Promise((ok) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => ok(Buffer.concat(c))); });
+        r = await fn(new Request(url, { method: req.method, headers: { ...req.headers, 'x-forwarded-for': req.headers['x-forwarded-for'] || req.socket.remoteAddress }, body }));
+        if (!live && req.method === 'GET') cache.set(key, { t: Date.now(), r: r.clone() });
+      }
       res.writeHead(r.status, Object.fromEntries(r.headers)); res.end(Buffer.from(await r.arrayBuffer())); return;
     }
     let p = normalize(join(root, decodeURIComponent(url.pathname)));

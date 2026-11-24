@@ -262,7 +262,22 @@ function setMeme(on, id) {
   document.querySelector('meta[name=theme-color]').content = '#2a1433';
   import('./meme.js').then((m) => m.openMeme({ byId: () => S.byId, traitNames: () => S.traitNames, atlas: () => ATLAS, stats: () => S.stats, stateAt: () => S.stateAt, decorate, night: () => S.night }, id));
 }
+// Pocket Run (#/play or #/play/<id>) lives in game.js, loaded on first visit.
+let gameOn = false, gameMod = null;
+function setGame(on, id) {
+  gameOn = on; $('#game').hidden = !on; document.body.classList.toggle('game-on', on);
+  if (!on) { gameMod?.closeGame(); return; }
+  closeDetail(true);
+  document.body.dataset.view = 'play';
+  $('#title').textContent = 'Pocket Run'; $('#eyebrow').textContent = 'Layer ∞ · The arcade'; $('#tagline').textContent = 'Your real Pocket is the cartridge. Its live clock, streak, weather and companions decide how the run plays. One life: soil, garden, heaven.';
+  document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.v === 'play')));
+  document.querySelector('meta[name=theme-color]').content = '#10241b';
+  import('./game.js').then((m) => { gameMod = m; m.openGame({ byId: () => S.byId, traitNames: () => S.traitNames, atlas: () => ATLAS, decorate }, id); });
+}
 function route() {
+  const gm = location.hash.match(/^#\/?play(?:\/(\d+))?/);
+  if (gm) { if (memeOn) setMeme(false); setGame(true, gm[1] ? Number(gm[1]) : null); return; }
+  if (gameOn) { setGame(false); if (!location.hash.match(/^#\/?meme/)) { document.body.dataset.view = S.view; setView(S.view); } }
   const mm = location.hash.match(/^#\/?meme(?:\/(\d+))?/);
   if (mm) { setMeme(true, mm[1] ? Number(mm[1]) : null); return; }
   if (memeOn) { setMeme(false); document.body.dataset.view = S.view; setView(S.view); }
@@ -350,7 +365,7 @@ function renderDetail(p, meta, chainOwner, shares, loaded) {
     ${state}
     ${owner ? `<div class="box"><h3>Owner</h3><div class="owner"><a href="${EXPLORER}/address/${owner}" target="_blank" rel="noopener"><code>${short(owner)}</code></a>${chainOwner ? '<span class="verified">✓ read on-chain just now</span>' : loaded ? '' : '<span class="note" style="margin:0">checking chain…</span>'}</div></div>` : ''}
     <div class="box"><h3>Traits</h3><div class="traits">${traitsHTML || '<div class="skel"></div>'}</div></div>
-    <div class="links"><a class="btn" href="#/meme/${p.i}">Make a meme</a><a class="btn ghost" href="${MARKET}/${p.i}" target="_blank" rel="noopener">Open on pocketpad.io ↗</a><a class="btn ghost" href="${EXPLORER}/token/${CONTRACT}/instance/${p.i}" target="_blank" rel="noopener">Explorer ↗</a></div>`;
+    <div class="links"><a class="btn" href="#/meme/${p.i}">Make a meme</a><a class="btn" href="#/play/${p.i}">Play as #${p.i}</a><a class="btn ghost" href="${MARKET}/${p.i}" target="_blank" rel="noopener">Open on pocketpad.io ↗</a><a class="btn ghost" href="${EXPLORER}/token/${CONTRACT}/instance/${p.i}" target="_blank" rel="noopener">Explorer ↗</a></div>`;
   updateCountdown();
 }
 function updateCountdown() {
@@ -363,7 +378,7 @@ function updateCountdown() {
 
 // ---------- events ----------
 function bind() {
-  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { location.hash = b.dataset.v === 'meme' ? '#/meme' : `#/${b.dataset.v}`; }));
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { location.hash = b.dataset.v === 'meme' ? '#/meme' : b.dataset.v === 'play' ? '#/play' : `#/${b.dataset.v}`; }));
   let qt; $('#q').addEventListener('input', (e) => { clearTimeout(qt); qt = setTimeout(() => { S.q = e.target.value; applyFilters(true); }, 120); });
   $('#q').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return; const n = Number(e.target.value.trim().replace(/^#/, ''));
