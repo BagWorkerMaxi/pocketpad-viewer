@@ -63,13 +63,14 @@ async function refreshLive() {
     renderHeader(); refreshList(false); setLive();
   } catch (e) { setLive(true); }
 }
+let stateRetry = 0;
 async function refreshState() {
   try {
     const parts = await Promise.all([0, 1, 2, 3, 4].map((i) => fetch(`/api/state?part=${i}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })));
     for (const pt of parts) mergeState(pt.pockets);
     S.stateAt = Math.min(...parts.map((p) => Date.parse(p.fetchedAt)));
-    renderHeader(); refreshList(false); setLive();
-  } catch (e) { /* keep snapshot */ }
+    renderHeader(); refreshList(false); setLive(); stateRetry = 0;
+  } catch (e) { /* keep what we have; one flaky upstream call should not leave states stale for 10 minutes, so retry soon (max 3 times) */ if (stateRetry++ < 3) setTimeout(refreshState, 45e3 * stateRetry); }
 }
 
 // ---------- header ----------
@@ -86,7 +87,26 @@ function animateCount(el, to) {
   const step = (t) => { if (id !== countAnim) return; const k = Math.min(1, (t - t0) / 900), e = 1 - Math.pow(1 - k, 3); el.textContent = fmtN(Math.round(from + (to - from) * e)); if (k < 1) requestAnimationFrame(step); };
   requestAnimationFrame(step);
 }
-function renderHeader() {
+// Home "Wrapped picks": computed from the same live data (longest streak, top-ranked spirit, biggest wallet, Pocket of the day).
+let picksSig = '';
+function renderPicks() {
+  const el = $('#wrPicks'); if (!el || !S.byId.size) return;
+  let streak = null, spirit = null; const own = new Map(), now = Date.now();
+  for (const p of S.byId.values()) {
+    if (p.seg === 'plant' && (!p.diesAt || p.diesAt > now) && (p.sk ?? 0) > 0 && (!streak || p.sk > streak.sk || (p.sk === streak.sk && (p.wd ?? 0) > (streak.wd ?? 0)))) streak = p;
+    if (p.seg === 'reveal' && p.rk != null && (!spirit || p.rk < spirit.rk)) spirit = p;
+    if (p.o) { const k = p.o.toLowerCase(), o = own.get(k) || { n: 0, r: 0 }; o.n++; if (p.seg === 'reveal') o.r++; own.set(k, o); }
+  }
+  let big = null; for (const [k, o] of own) if (!big || o.n > big.o.n || (o.n === big.o.n && (o.r > big.o.r || (o.r === big.o.r && k < big.k)))) big = { k, o };
+  const d = new Date(), day = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); let h = day; h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); const potd = 1 + ((h ^ (h >>> 16)) >>> 0) % 2500;
+  const items = [[`#/wrapped/${potd}`, 'Pocket of the day', `#${potd}`]];
+  if (streak) items.push([`#/wrapped/${streak.i}`, 'Longest streak', `#${streak.i} · ${streak.sk} day${streak.sk === 1 ? '' : 's'}`]);
+  if (spirit) items.push([`#/wrapped/${spirit.i}`, 'Best spirit rank', `${spirit.s?.name || '#' + spirit.i} · #${spirit.rk}`]);
+  if (big) items.push([`#/wrapped/wallet/${big.k}`, 'Biggest wallet', `${big.k.slice(0, 6)}…${big.k.slice(-4)} · ${big.o.n} Pockets`]);
+  const html = items.map(([href, k, v]) => `<a href="${href}"><small>${esc(k)}</small><b>${esc(v)}</b></a>`).join('');
+  if (html !== picksSig) { picksSig = html; el.innerHTML = html; el.hidden = false; }
+}
+function renderHeader() { renderPicks();
   const v = VIEWS[S.view], c = counts();
   for (const k of Object.keys(VIEWS)) $(`[data-count=${k}]`).textContent = fmtN(c[k]);
   animateCount($('#bigCount'), c[S.view]);
@@ -274,7 +294,49 @@ function setGame(on, id) {
   document.querySelector('meta[name=theme-color]').content = '#10241b';
   import('./game.js').then((m) => { gameMod = m; m.openGame({ byId: () => S.byId, traitNames: () => S.traitNames, atlas: () => ATLAS, decorate }, id); });
 }
-function route() {
+// Pocket Wrapped (#/wrapped/<id>, #/wrapped/wallet, #/wrapped/wallet/<0x…>, #/wrapped/random) lives in wrapped.js, loaded on first visit.
+let wrappedOn = false, wrappedMod = null, wrappedFrom = '', wrappedFocus = null, stateP = null;
+async function refreshOne(id) {
+  try {
+    const r = await fetch(`/api/pocket?id=${id}`, { signal: AbortSignal.timeout(2500) }); const j = r.ok ? await r.json() : null; const p = S.byId.get(id);
+    if (j?.pocket && p) { const a = p.a; for (const k of ['l', 'rk', 'dn', 's']) delete p[k]; Object.assign(p, j.pocket, { a }); decorate(p); }
+  } catch { /* snapshot is fine */ }
+}
+function wrappedClose() {
+  const m = (wrappedFrom || '').match(/^#\/?wrapped\/(\d+)(?:\/\d+)?\/?(?:\?from=(0x[0-9a-fA-F]{40}))?$/i), p = m ? S.byId.get(Number(m[1])) : null;
+  if (m && m[2]) { const w = `#/wrapped/wallet/${m[2].toLowerCase()}`; location.hash = walletReturn.toLowerCase().startsWith(w) ? walletReturn : w; return; }
+  location.hash = p ? `#/${{ seed: 'soil', plant: 'garden', reveal: 'heaven' }[p.seg]}/${p.i}` : `#/${S.view}`;
+}
+function setWrapped(on, params) {
+  const el = $('#wrapped');
+  if (!on) { if (!wrappedOn) return; wrappedOn = false; el.hidden = true; document.body.classList.remove('wr-on'); for (const q of ['header.top', 'main', 'footer.foot']) { const n = document.querySelector(q); if (n) n.inert = false; } wrappedMod?.closeWrapped(); const f = wrappedFocus; wrappedFocus = null; if (f && f.isConnected && f.focus) try { f.focus({ preventScroll: true }); } catch {} return; }
+  wrappedFrom = location.hash; if (!wrappedOn) { const ae = document.activeElement; wrappedFocus = ae && ae !== document.body ? ae : null; } wrappedOn = true; el.hidden = false; document.body.classList.add('wr-on');
+  for (const q of ['header.top', 'main', 'footer.foot']) { const n = document.querySelector(q); if (n) n.inert = true; }
+  import('./wrapped.js').then((m) => { wrappedMod = m; if (!wrappedOn) return; m.openWrapped({ byId: () => S.byId, traitNames: () => S.traitNames, atlas: () => ATLAS, stateAt: () => S.stateAt, decorate, refresh: refreshOne, ready: () => stateP }, params, { close: wrappedClose }); })
+    .catch(() => { el.innerHTML = '<div class="wr-shell"><p style="color:#fff;font:600 16px var(--sans)">Could not load Pocket Wrapped. <a style="color:#ffd98a" href="#/soil">Back to the almanac</a></p></div>'; });
+}
+let walletReturn = ''; // the exact wallet card you left from, so closing a Pocket opened from a wallet lands back on that card
+function route(e) {
+  const old = e && e.oldURL ? e.oldURL.slice(e.oldURL.indexOf('#')) : '';
+  if (/\?from=0x/i.test(location.hash)) walletReturn = /^#\/?wrapped\/wallet\/0x[0-9a-f]{40}(\/\d+)?$/i.test(old) ? old : ''; // only trust a wallet we really came from
+  // #/wrapped, #/wrapped/random, #/wrapped/<id>[/<card>][?from=0x…], #/wrapped/wallet[/<0x…>[/<card>]]
+  const wm = location.hash.match(/^#\/?wrapped(?:\/(random)|\/wallet(?:\/(0x[0-9a-f]{40}))?|\/([^/?]+?))?(?:\/(\d+))?\/?(?:\?from=(0x[0-9a-f]{40}))?$/i)
+    || (/^#\/?wrapped\/wallet\//i.test(location.hash) ? [location.hash, null, null, null, null, null, 'badaddr'] : /^#\/?wrapped(?:[/?]|$)/i.test(location.hash) ? [location.hash, null, null, null, null, null, 'badlink'] : null);
+  if (wm) {
+    const was = gameOn || memeOn;
+    if (gameOn) { setGame(false); }
+    if (memeOn) { setMeme(false); }
+    if (!S.list.length || was) { document.body.dataset.view = S.view; setView(S.view); }
+    closeDetail(true);
+    if (wm[1]) { const id = 1 + Math.floor(Math.random() * 2500); history.replaceState(null, '', `#/wrapped/${id}`); setWrapped(true, { mode: 'pocket', id }); return; }
+    const card = wm[4] ? Number(wm[4]) : 1;
+    if (wm[6] === 'badlink') { setWrapped(true, { mode: 'form', msg: 'That link does not look right. Type a Pocket number or a wallet address instead.' }); return; }
+    if (wm[6] === 'badaddr') { setWrapped(true, { mode: 'form', msg: 'That wallet address does not look right: it should be 0x followed by 40 letters and numbers.' }); return; }
+    if (/^#\/?wrapped\/wallet/i.test(location.hash)) { setWrapped(true, wm[2] ? { mode: 'wallet', addr: wm[2].toLowerCase(), card } : { mode: 'form' }); return; }
+    if (wm[3] != null) { const id = /^\d+$/.test(wm[3]) ? Number(wm[3]) : NaN; setWrapped(true, { mode: 'pocket', id, card, from: wm[5] ? wm[5].toLowerCase() : null }); return; }
+    setWrapped(true, { mode: 'form' }); return;
+  }
+  if (wrappedOn) setWrapped(false);
   const gm = location.hash.match(/^#\/?play(?:\/(\d+))?/);
   if (gm) { if (memeOn) setMeme(false); setGame(true, gm[1] ? Number(gm[1]) : null); return; }
   if (gameOn) { setGame(false); if (!location.hash.match(/^#\/?meme/)) { document.body.dataset.view = S.view; setView(S.view); } }
@@ -365,7 +427,7 @@ function renderDetail(p, meta, chainOwner, shares, loaded) {
     ${state}
     ${owner ? `<div class="box"><h3>Owner</h3><div class="owner"><a href="${EXPLORER}/address/${owner}" target="_blank" rel="noopener"><code>${short(owner)}</code></a>${chainOwner ? '<span class="verified">✓ read on-chain just now</span>' : loaded ? '' : '<span class="note" style="margin:0">checking chain…</span>'}</div></div>` : ''}
     <div class="box"><h3>Traits</h3><div class="traits">${traitsHTML || '<div class="skel"></div>'}</div></div>
-    <div class="links"><a class="btn" href="#/meme/${p.i}">Make a meme</a><a class="btn" href="#/play/${p.i}">Play as #${p.i}</a><a class="btn ghost" href="${MARKET}/${p.i}" target="_blank" rel="noopener">Open on pocketpad.io ↗</a><a class="btn ghost" href="${EXPLORER}/token/${CONTRACT}/instance/${p.i}" target="_blank" rel="noopener">Explorer ↗</a></div>`;
+    <div class="links"><a class="btn" href="#/wrapped/${p.i}">Wrapped</a><a class="btn" href="#/meme/${p.i}">Make a meme</a><a class="btn" href="#/play/${p.i}">Play as #${p.i}</a><a class="btn ghost" href="${MARKET}/${p.i}" target="_blank" rel="noopener">Open on pocketpad.io ↗</a><a class="btn ghost" href="${EXPLORER}/token/${CONTRACT}/instance/${p.i}" target="_blank" rel="noopener">Explorer ↗</a></div>`;
   updateCountdown();
 }
 function updateCountdown() {
@@ -403,8 +465,10 @@ function bind() {
   window.addEventListener('scroll', () => { tip.hidden = true; }, { passive: true });
   let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { const mobile = innerWidth < 640; $('#world').style.setProperty('--tile', TILE[S.view][mobile ? 1 : 0] + 'px'); measure(); }, 150); });
   $('#dClose').addEventListener('click', () => closeDetail()); $('#scrim').addEventListener('click', () => closeDetail());
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); if (e.key === '/' && document.activeElement !== $('#q') && !document.body.classList.contains('wr-on')) { e.preventDefault(); $('#q').focus(); } });
   $('#dBody').addEventListener('click', (e) => { const b = e.target.closest('[data-dn]'); if (!b) return; setNight(b.dataset.dn === 'night'); });
+  $('#wrPromoForm').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#wrPromoIn').value.trim().replace(/^#/, '');
+    if (/^0x[0-9a-f]{40}$/i.test(v)) location.hash = '#/wrapped/wallet/' + v.toLowerCase(); else if (/^\d+$/.test(v)) location.hash = '#/wrapped/' + Number(v); else { const i = $('#wrPromoIn'); i.setCustomValidity?.(''); i.value = ''; i.placeholder = 'Type 1 to 2500, or a 0x address'; i.focus(); } });
   window.addEventListener('hashchange', route);
   const tb = $('#toolbar'); new IntersectionObserver(([e]) => tb.classList.toggle('stuck', e.intersectionRatio < 1), { threshold: [1], rootMargin: '-1px 0px 0px 0px' }).observe(tb);
 }
@@ -419,9 +483,10 @@ function setNight(n) {
   bind();
   await Promise.all([loadSnapshot(), fetch('/atlas/manifest.json').then((r) => r.ok ? r.json() : null).then((j) => { ATLAS = j; }).catch(() => {})]);
   route(); setLive();
-  refreshLive(); refreshState();
+  refreshLive(); stateP = refreshState();
   setInterval(refreshLive, 60e3);
   setInterval(refreshState, 10 * 60e3);
   setInterval(() => { updateCountdown(); if (++tick % 15 === 0) setLive(); }, 1000);
   setInterval(() => { if (S.view === 'garden') renderHeader(); }, 60e3);
+  setInterval(renderPicks, 60e3); // keeps 'Pocket of the day' right across midnight
 })();

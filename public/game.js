@@ -1106,3 +1106,26 @@ async function lbSubmit() {
   inp.disabled = true; r.tok = Promise.resolve(null);
   if (LB.tab) lbShow(LB.tab);
 }
+
+// Plain facts about how a Pocket plays, for Pocket Wrapped (same profile() the game itself uses).
+export function runInfo(app, id) {
+  A = app; const P = profile(id), out = { seg: P.seg, unrevealed: P.unrevealed, rarity: P.rarity, rarityPerk: RPERK[P.rIdx], start: P.start, startDay: P.startDay, halo: P.halo, comboBase: P.comboBase };
+  if (P.seg === 'seed') { out.power = { name: SEED_POWER.name, desc: SEED_POWER.desc, note: 'Charged from the start' }; out.unit = '% moisture'; }
+  else if (P.seg === 'plant') {
+    const pw = POWERS[P.companion], al = ALLIES[P.visitors];
+    out.unit = 'h on the clock';
+    out.power = pw ? { name: P.companion, desc: pw.desc, note: P.startDay >= UNLOCK.power ? `Ready from the start (day ${P.startDay})` : `Joins on day ${UNLOCK.power}` } : null;
+    out.helper = al ? { name: P.visitors, desc: al.desc, note: P.startDay >= UNLOCK.ally ? `Ready from the start (day ${P.startDay})` : `Arrives on day ${UNLOCK.ally}` } : null;
+    out.weather = WEATHER[P.weather] ? { name: P.weather, desc: WEATHER[P.weather].desc } : null;
+    out.sky = SKY[P.sky] ? { name: P.sky, desc: SKY[P.sky].desc } : null;
+    out.special = P.special && SPECIAL[P.special] ? { name: P.special, desc: SPECIAL[P.special] } : null;
+  } else {
+    out.unit = '% light';
+    out.power = P.spiritPower ? { name: P.spiritPower.name, desc: P.spiritPower.desc, note: P.unrevealed ? 'Plain unrevealed spirit' : `From its ${P.body} body` } : null;
+    const g = keepsGroup(P.keeps);
+    out.keeps = g ? { name: P.keeps, desc: KEEPS[g].desc } : null;
+    out.pose = P.pose && POSE[P.pose] ? { name: P.pose, desc: POSE[P.pose] } : null;
+    out.charms = P.charms;
+  }
+  return out;
+}

@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Pocket Almanac · every Pocket, live</title>
 <meta name="description" content="An unofficial live field guide to all 2,500 Pockets on Robinhood Chain: seeds in the soil, plants in the garden, spirits in heaven.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pocket Almanac">
+<meta property="og:title" content="Pocket Almanac · every Pocket, live">
+<meta property="og:description" content="A live field guide to all 2,500 Pockets, plus Pocket Wrapped: swipeable story cards for any Pocket or wallet.">
+<meta property="og:image" content="https://pocket-viewer.vercel.app/og-wrapped.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#1a110b">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f3a24'/%3E%3Cpath d='M16 27V15' stroke='%23e8d9a8' stroke-width='2.4' stroke-linecap='round'/%3E%3Cpath d='M16 16c0-5 4-8 9-8 0 5-4 8-9 8zM16 18c0-4-3-7-8-7 0 4 3 7 8 7z' fill='%2390d26a'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,6 +19,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..800,50..100;1,9..144,300..700,50..100&family=Inter:wght@400;500;600;700&family=Pixelify+Sans:wght@500;600&family=Anton&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/game.css">
+<link rel="stylesheet" href="/wrapped.css">
 </head>
 <body data-view="soil" data-time="day">
 <div class="sky" aria-hidden="true">
@@ -29,6 +36,7 @@
     <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 27V15" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M16 16c0-5 4-8 9-8 0 5-4 8-9 8zM16 18c0-4-3-7-8-7 0 4 3 7 8 7z" fill="currentColor"/></svg>
     <span>Pocket Almanac</span>
   </a>
+  <a class="wr-link-top" href="#/wrapped" id="wrTop" aria-label="Pocket Wrapped"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.4 6.2L21 9l-5 4.3L17.5 20 12 16.6 6.5 20 8 13.3 3 9l6.6-.8z" fill="currentColor"/></svg><span>Wrapped</span></a>
   <div class="live" id="live" title="Data refreshes automatically">
     <span class="dot"></span><span id="liveText">Loading…</span>
   </div>
@@ -61,6 +69,13 @@
       <span class="tl">Play</span><span class="tc new">New</span></button>
   </nav>
 
+  <section class="wr-promo" id="wrPromo" aria-label="Pocket Wrapped">
+    <div class="wp-txt"><b>Pocket Wrapped 🎁</b><small>Swipeable story cards for any Pocket, or a whole wallet.</small></div>
+    <form id="wrPromoForm"><input id="wrPromoIn" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pocket # or 0x wallet" aria-label="Pocket number or wallet address"><button type="submit">Wrap it</button></form>
+    <div class="wp-links"><a class="wp-b alt" href="#/wrapped/random" id="wrRandom">Surprise me</a></div>
+    <nav class="wp-picks" id="wrPicks" aria-label="Wrapped picks" hidden></nav>
+  </section>
+
   <div class="toolbar" id="toolbar">
     <label class="search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -90,6 +105,7 @@
   <p class="src" id="snapInfo"></p>
 </footer>
 
+<div class="wr" id="wrapped" hidden role="dialog" aria-modal="true" aria-label="Pocket Wrapped"></div>
 <div class="tip" id="tip" role="tooltip" hidden></div>
 <div class="scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle" hidden>

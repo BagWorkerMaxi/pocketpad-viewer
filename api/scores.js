@@ -76,17 +76,17 @@ async function boardData() { if (Date.now() - cache.t < 10e3 && cache.data) retu
 
 export async function GET(req) {
   const st = new URL(req.url).searchParams.get('stage');
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Leaderboard storage is not connected on this deployment', offline: true }, 503);
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Leaderboard storage is not connected on this deployment', offline: true }, 200);
   if (!STAGES.includes(st)) return json({ error: 'bad stage' }, 400);
   const key = 'all:' + st;
   try {
     const data = await boardData(), list = data.boards[key] || [];
     return json({ board: key, stage: st, total: list.length, entries: list.slice(0, SHOW).map(pub) }, 200, 'public, s-maxage=15, stale-while-revalidate=45');
-  } catch (e) { return json({ error: 'Leaderboard is unavailable right now' }, 503); }
+  } catch (e) { return json({ error: 'Leaderboard is unavailable right now' }, 200); }
 }
 
 export async function POST(req) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Leaderboard storage is not connected on this deployment', offline: true }, 503);
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return json({ error: 'Leaderboard storage is not connected on this deployment', offline: true }, 200);
   const ip = ipOf(req), ih = ipHash(ip);
   let body; try { const t = await req.text(); if (t.length > 4000) throw 0; body = JSON.parse(t); } catch { return json({ error: 'Bad request' }, 400); }
   if (body?.action === 'start') {
@@ -111,7 +111,7 @@ export async function POST(req) {
   const r = body.run, d = today();
   for (let attempt = 0; attempt < 3; attempt++) {
     let data, etag;
-    try { ({ data, etag } = await load()); } catch { return json({ error: 'Leaderboard is unavailable right now' }, 503); }
+    try { ({ data, etag } = await load()); } catch { return json({ error: 'Leaderboard is unavailable right now' }, 200); }
     data.ips = { [d]: (data.ips || {})[d] || {} };
     if ((data.ips[d][ih] || 0) >= IP_DAY) return json({ error: `Submit limit reached (${IP_DAY} per day), try again tomorrow` }, 429);
     if ((data.nonces || []).includes(tk.n)) return nope('This run was already submitted');
